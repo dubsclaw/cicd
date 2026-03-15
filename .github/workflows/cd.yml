@@ -1,0 +1,47 @@
+name: CD Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Docker image name (e.g. triple-r-hub)"
+        required: true
+        type: string
+      compose_file:
+        description: "Path to docker-compose.yml"
+        required: false
+        type: string
+        default: "docker-compose.yml"
+      deploy_dir:
+        description: "Directory on the Mac where the app lives"
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull latest image
+        run: docker pull ${{ env.IMAGE_NAME }}:latest
+
+      - name: Copy compose file to deploy directory
+        run: cp ${{ inputs.compose_file }} ${{ inputs.deploy_dir }}/${{ inputs.compose_file }}
+
+      - name: Deploy with docker compose
+        working-directory: ${{ inputs.deploy_dir }}
+        run: |
+          docker compose pull
+          docker compose up -d --remove-orphans
+        env:
+          IMAGE_TAG: latest
