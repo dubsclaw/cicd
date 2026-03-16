@@ -30,10 +30,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        run: |
+          export DOCKER_CONFIG=$(mktemp -d)
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker --config "$DOCKER_CONFIG" login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
 
       - name: Pull latest image
-        run: docker pull ${{ env.IMAGE_NAME }}:latest
+        run: docker --config "$DOCKER_CONFIG" pull ${{ env.IMAGE_NAME }}:latest
 
       - name: Sync project files to deploy directory
         run: |
@@ -45,3 +48,7 @@ jobs:
         run: |
           export IMAGE=ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:latest
           docker compose up -d --remove-orphans
+
+      - name: Cleanup Docker config
+        if: always()
+        run: rm -rf "$DOCKER_CONFIG"
