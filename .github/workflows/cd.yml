@@ -33,7 +33,8 @@ jobs:
         run: |
           DOCKER_CONFIG=$(mktemp -d)
           AUTH=$(printf '%s:%s' "${{ github.actor }}" "${{ secrets.GITHUB_TOKEN }}" | base64)
-          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$AUTH" > "$DOCKER_CONFIG/config.json"
+          CURRENT_CONTEXT=$(docker context show 2>/dev/null || echo "default")
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}},"currentContext":"%s"}' "$AUTH" "$CURRENT_CONTEXT" > "$DOCKER_CONFIG/config.json"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
 
       - name: Pull latest image
