@@ -32,10 +32,8 @@ jobs:
       - name: Log in to GHCR
         run: |
           DOCKER_CONFIG=$(mktemp -d)
-          AUTH=$(echo -n "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" | base64)
-          cat > "$DOCKER_CONFIG/config.json" <<ENDOFCFG
-          {"auths":{"ghcr.io":{"auth":"${AUTH}"}}}
-          ENDOFCFG
+          AUTH=$(printf '%s:%s' "${{ github.actor }}" "${{ secrets.GITHUB_TOKEN }}" | base64)
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$AUTH" > "$DOCKER_CONFIG/config.json"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
 
       - name: Pull latest image
