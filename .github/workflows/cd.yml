@@ -16,32 +16,58 @@ on:
         description: "Directory on the Mac where the app lives"
         required: true
         type: string
+      dockerfile:
+        description: "Path to Dockerfile"
+        required: false
+        type: string
+        default: "./Dockerfile"
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}
 
 jobs:
-  deploy:
-    name: Deploy
+  build-and-deploy:
+    name: Build & Deploy
     runs-on: self-hosted
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR
+      - name: Set up Docker
         run: |
+          # Detect OrbStack Docker socket
+          if [ -S "$HOME/.orbstack/run/docker.sock" ]; then
+            echo "DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock" >> "$GITHUB_ENV"
+          fi
+          # Create temp Docker config for GHCR auth (bypasses macOS Keychain)
           DOCKER_CONFIG=$(mktemp -d)
           AUTH=$(printf '%s:%s' "${{ github.actor }}" "${{ secrets.GITHUB_TOKEN }}" | base64)
           printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$AUTH" > "$DOCKER_CONFIG/config.json"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
-          # Detect Docker socket (OrbStack or default)
-          if [ -S "$HOME/.orbstack/run/docker.sock" ]; then
-            echo "DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock" >> "$GITHUB_ENV"
-          fi
 
-      - name: Pull latest image
-        run: docker --config "$DOCKER_CONFIG" pull ${{ env.IMAGE_NAME }}:latest
+      - name: Build image (native ARM64)
+        run: |
+          docker --config "$DOCKER_CONFIG" build \
+            -t ${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -f ${{ inputs.dockerfile }} .
+
+      - name: Scan image with Trivy
+        run: |
+          # Install/update Trivy
+          which trivy >/dev/null 2>&1 || brew install aquasecurity/trivy/trivy
+          trivy image \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            ${{ env.IMAGE_NAME }}:latest
+
+      - name: Push image to GHCR
+        run: |
+          docker --config "$DOCKER_CONFIG" push ${{ env.IMAGE_NAME }}:latest
+          docker --config "$DOCKER_CONFIG" push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Sync project files to deploy directory
         run: |
@@ -52,7 +78,7 @@ jobs:
         working-directory: ${{ inputs.deploy_dir }}
         run: |
           unset DOCKER_CONFIG
-          export IMAGE=ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:latest
+          export IMAGE=${{ env.IMAGE_NAME }}:latest
           docker compose up -d --remove-orphans
 
       - name: Cleanup Docker config
