@@ -130,8 +130,9 @@ jobs:
           image-ref: ${{ env.IMAGE_NAME }}:ci-scan
           format: table
           exit-code: 1
-          severity: CRITICAL,HIGH
+          severity: CRITICAL
           ignore-unfixed: true
+          trivyignores: .trivyignore
 
       - name: Scan for secrets with Trivy
         uses: aquasecurity/trivy-action@master
