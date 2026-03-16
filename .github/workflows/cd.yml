@@ -35,13 +35,13 @@ jobs:
       - name: Pull latest image
         run: docker pull ${{ env.IMAGE_NAME }}:latest
 
-      - name: Copy compose file to deploy directory
-        run: cp ${{ inputs.compose_file }} ${{ inputs.deploy_dir }}/${{ inputs.compose_file }}
+      - name: Sync project files to deploy directory
+        run: |
+          rsync -av --exclude='.git' --exclude='node_modules' --exclude='.next' \
+            ./ ${{ inputs.deploy_dir }}/
 
       - name: Deploy with docker compose
         working-directory: ${{ inputs.deploy_dir }}
         run: |
-          docker compose pull
+          export IMAGE=ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}:latest
           docker compose up -d --remove-orphans
-        env:
-          IMAGE_TAG: latest
