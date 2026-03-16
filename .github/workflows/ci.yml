@@ -44,7 +44,7 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: ${{ inputs.dockerfile }}
-          failure-threshold: warning
+          failure-threshold: error
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
