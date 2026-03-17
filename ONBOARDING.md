@@ -6,15 +6,15 @@ All apps should follow this pipeline. Central workflows live in `dubsclaw/cicd` 
 
 ```
 git push to main
-  -> CI (GitHub cloud runners):
+  -> CI (GitHub cloud runners, ~45s parallel):
       1. Hadolint (Dockerfile lint)
       2. ESLint / language linter
       3. Tests (npm test)
-      4. Docker build (amd64 + arm64)
-      5. Trivy scan (CVEs + secrets)
-      6. Push image to GHCR
-  -> CD (self-hosted runner on Mac Mini):
-      7. Pull ARM64 image from GHCR
+      4. Secrets scan (Trivy)
+  -> CD (self-hosted runner on Mac Mini, ~2 min):
+      5. Native ARM64 Docker build
+      6. Trivy image scan (CVEs)
+      7. Push image to GHCR
       8. Sync project files
       9. docker compose up -d
 ```
@@ -117,20 +117,29 @@ This lets `docker compose up` use the GHCR image by default (CD sets `IMAGE`), b
 
 ### 5. Register self-hosted runner
 
-Each repo needs the runner registered (until we move to a GitHub org):
+Each app gets its own runner instance. Run the setup script:
 ```bash
-TOKEN=$(gh api -X POST /repos/dubsclaw/<app-name>/actions/runners/registration-token --jq '.token')
-cd /Users/dubs/actions-runner
-./config.sh --url https://github.com/dubsclaw/<app-name> --token "$TOKEN" --name mac-mini --labels self-hosted,macOS,ARM64 --unattended --replace
+/Users/dubs/apps/cicd/scripts/add-runner.sh <app-name>
 ```
 
-Note: the runner at `/Users/dubs/actions-runner` is already running as a macOS service. Re-registering it will switch it to the new repo. To support multiple repos, either:
-- Create a GitHub org and register the runner at the org level
-- Or set up multiple runner instances in different directories
+This will:
+- Create a runner at `~/actions-runners/<app-name>/`
+- Register it with `dubsclaw/<app-name>` on GitHub
+- Install and start it as a macOS LaunchAgent service
+- Label it `self-hosted,macOS,ARM64`
+
+The runner survives reboots. To manage it:
+```bash
+cd ~/actions-runners/<app-name>
+./svc.sh status   # check status
+./svc.sh stop     # stop
+./svc.sh start    # start
+./svc.sh uninstall && rm -rf ~/actions-runners/<app-name>  # remove
+```
 
 ### 6. Connect GHCR package to repo
 
-After the first successful CI push:
+After the first successful CD build/push:
 1. Go to https://github.com/dubsclaw?tab=packages
 2. Click the new package
 3. Package settings -> Manage Actions access -> Add the repo with Write role
@@ -144,7 +153,7 @@ The CD pipeline syncs code but `.env` is gitignored. Make sure the app's `.env` 
 The pipeline enforces:
 - **Hadolint**: Dockerfile best practices (error threshold)
 - **ESLint**: No unused variables/imports, React compiler rules, Next.js rules
-- **Trivy**: Blocks on CRITICAL CVEs, warns on HIGH
+- **Trivy**: Blocks on CRITICAL CVEs in Docker images
 - **Secrets scan**: Blocks if secrets are found in code
 
 Fix lint errors before pushing to main. The pipeline will reject bad code.
@@ -158,13 +167,15 @@ The CI template defaults to Node.js. For Python or other stacks:
 
 ## Key Files
 
-- Runner install: `/Users/dubs/actions-runner/`
-- Runner service: `~/Library/LaunchAgents/actions.runner.dubsclaw-triple-r-hub.mac-mini.plist`
-- Docker config: OrbStack at `~/.orbstack/run/docker.sock`
+- Runner script: `/Users/dubs/apps/cicd/scripts/add-runner.sh`
+- Runner installs: `~/actions-runners/<app-name>/`
+- Runner services: `~/Library/LaunchAgents/actions.runner.dubsclaw-<app-name>.*.plist`
+- Docker: OrbStack at `~/.orbstack/run/docker.sock`
 - GHCR registry: `ghcr.io/dubsclaw/<app-name>`
 
 ## Troubleshooting
 
 - **macOS Keychain errors**: The runner can't access Keychain. Docker auth is handled via temp config files in the CD workflow. Never use `docker login` directly on the runner.
-- **ARM64 manifest errors**: CI builds multi-arch (amd64 + arm64). If you see manifest errors, the push step may have failed.
 - **docker compose exit 125**: Usually means `DOCKER_CONFIG` is interfering. The CD workflow unsets it before running compose.
+- **Trivy not found**: The CD workflow installs Trivy via `brew` on first run. If brew isn't available, install Trivy manually.
+- **Runner offline**: Check `cd ~/actions-runners/<app-name> && ./svc.sh status`. Restart with `./svc.sh start`.
