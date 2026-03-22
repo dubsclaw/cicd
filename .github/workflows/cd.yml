@@ -75,8 +75,17 @@ jobs:
 
       - name: Push image to GHCR
         run: |
-          docker --config "$DOCKER_CONFIG" push ${{ env.IMAGE_NAME }}:latest
-          docker --config "$DOCKER_CONFIG" push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          for attempt in 1 2 3; do
+            echo "Push attempt $attempt..."
+            if docker --config "$DOCKER_CONFIG" push ${{ env.IMAGE_NAME }}:latest; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push failed on attempt $attempt"
+            [ "$attempt" -lt 3 ] && sleep 10
+          done
+          echo "All push attempts failed"
+          exit 1
 
       - name: Sync project files to deploy directory
         run: |
