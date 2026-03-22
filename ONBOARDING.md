@@ -7,16 +7,18 @@ All apps should follow this pipeline. Central workflows live in `dubsclaw/cicd` 
 ```
 git push to main
   -> CI (GitHub cloud runners, ~45s parallel):
-      1. Hadolint (Dockerfile lint)
-      2. ESLint / language linter
-      3. Tests (npm test)
-      4. Secrets scan (Trivy)
+      1. Branch naming check (advisory warning)
+      2. Hadolint (Dockerfile lint)
+      3. ESLint / language linter
+      4. Tests (npm test)
+      5. Secrets scan (Trivy)
   -> CD (self-hosted runner on Mac Mini, ~2 min):
-      5. Native ARM64 Docker build
-      6. Trivy image scan (CVEs)
-      7. Push image to GHCR
-      8. Sync project files
-      9. docker compose up -d
+      6. Native ARM64 Docker build
+      7. Trivy image scan (CVEs)
+      8. Push image to GHCR
+      9. Sync project files
+      10. docker compose up -d
+      11. Deploy notification (Discord/Slack/Teams)
 ```
 
 CI runs on every push and PR to `main`. CD only runs on `main` after CI passes.
@@ -38,7 +40,16 @@ git commit -m "Initial commit"
 gh repo create dubsclaw/<app-name> --private --source=. --push
 ```
 
-### 2. Add workflow files
+### 2. Add PR template
+
+```bash
+mkdir -p .github
+cp /Users/dubs/apps/cicd/.github/pull_request_template.md .github/pull_request_template.md
+```
+
+This ensures every PR links back to a backlog issue and follows a consistent format.
+
+### 3. Add workflow files
 
 Create `.github/workflows/ci.yml`:
 ```yaml
@@ -80,6 +91,8 @@ jobs:
     with:
       image_name: <app-name>
       deploy_dir: /Users/dubs/.openclaw/workspace/projects/<app-name>
+    secrets:
+      NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
     permissions:
       contents: read
       packages: write
@@ -144,7 +157,62 @@ After the first successful CD build/push:
 2. Click the new package
 3. Package settings -> Manage Actions access -> Add the repo with Write role
 
-### 7. Ensure .env file exists in deploy directory
+### 7. Add deploy notification webhook (optional)
+
+To get deploy notifications in Discord/Slack/Teams:
+
+1. Create a webhook in your messaging tool:
+   - **Discord**: Server Settings → Integrations → Webhooks → New Webhook
+   - **Slack**: Create an Incoming Webhook app
+   - **Teams**: Channel → Connectors → Incoming Webhook
+
+2. Add it as a repo secret:
+   ```bash
+   gh secret set NOTIFY_WEBHOOK_URL --repo dubsclaw/<app-name>
+   # Paste the webhook URL when prompted
+   ```
+
+3. The CD workflow defaults to Discord format. To change, add `notify_format` to the caller:
+   ```yaml
+   with:
+     notify_format: "teams"  # or "slack"
+   ```
+
+### 8. Set up branch protection
+
+For public repos, create a ruleset requiring PRs to main:
+
+```bash
+gh api repos/dubsclaw/<app-name>/rulesets --method POST --input - <<'EOF'
+{
+  "name": "Protect main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false
+      }
+    }
+  ]
+}
+EOF
+```
+
+> **Note:** Branch protection and rulesets require GitHub Pro for private repos on personal accounts. Use a GitHub Organization (free tier) to get branch protection on private repos.
+
+### 9. Ensure .env file exists in deploy directory
 
 The CD pipeline syncs code but `.env` is gitignored. Make sure the app's `.env` file exists in the deploy directory before the first deploy.
 

@@ -29,6 +29,25 @@ on:
         default: "./Dockerfile"
 
 jobs:
+  branch-naming:
+    name: Branch Naming
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if [ -z "$BRANCH" ]; then
+            echo "Not a pull request, skipping branch name check"
+            exit 0
+          fi
+          PATTERN="^(feature|fix|chore|docs|refactor|test)/[a-z0-9._-]+$"
+          if ! echo "$BRANCH" | grep -qE "$PATTERN"; then
+            echo "::warning::Branch '$BRANCH' does not follow naming convention: <type>/<description> where type is one of: feature, fix, chore, docs, refactor, test"
+          else
+            echo "Branch name '$BRANCH' follows the convention."
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
