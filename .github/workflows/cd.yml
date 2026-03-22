@@ -21,6 +21,15 @@ on:
         required: false
         type: string
         default: "./Dockerfile"
+      notify_format:
+        description: "Webhook payload format: discord, slack, or teams"
+        required: false
+        type: string
+        default: "discord"
+    secrets:
+      NOTIFY_WEBHOOK_URL:
+        description: "Webhook URL for deploy notifications"
+        required: false
 
 env:
   REGISTRY: ghcr.io
@@ -84,3 +93,55 @@ jobs:
       - name: Cleanup Docker config
         if: always()
         run: rm -rf "$DOCKER_CONFIG"
+
+  notify:
+    name: Deploy Notification
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    if: needs.build-and-deploy.result == 'success'
+    steps:
+      - name: Send deploy notification
+        env:
+          WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+          FORMAT: ${{ inputs.notify_format }}
+          APP_NAME: ${{ inputs.image_name }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "No webhook URL configured, skipping notification"
+            exit 0
+          fi
+
+          SHORT_SHA="${SHA:0:7}"
+          COMMIT_MSG=$(git log --format=%s -n 1 "$SHA" 2>/dev/null || echo "Deploy")
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          if [ "$FORMAT" = "discord" ]; then
+            PAYLOAD=$(jq -n \
+              --arg title "Deployed: ${APP_NAME}" \
+              --arg desc "**${COMMIT_MSG}**\n\nCommit: [\`${SHORT_SHA}\`](https://github.com/${REPO}/commit/${SHA})\nBy: ${ACTOR}\n[View run](${RUN_URL})" \
+              --arg ts "$TIMESTAMP" \
+              '{embeds: [{title: $title, description: $desc, color: 3066993, timestamp: $ts}]}')
+          elif [ "$FORMAT" = "slack" ]; then
+            PAYLOAD=$(jq -n \
+              --arg text ":rocket: Deployed *${APP_NAME}* (\`${SHORT_SHA}\`): ${COMMIT_MSG}" \
+              --arg body ":rocket: *Deployed: ${APP_NAME}*\n>${COMMIT_MSG}\n\nCommit: <https://github.com/${REPO}/commit/${SHA}|\`${SHORT_SHA}\`> by ${ACTOR}\n<${RUN_URL}|View run>" \
+              '{text: $text, blocks: [{type: "section", text: {type: "mrkdwn", text: $body}}]}')
+          elif [ "$FORMAT" = "teams" ]; then
+            PAYLOAD=$(jq -n \
+              --arg title "Deployed: ${APP_NAME}" \
+              --arg msg "$COMMIT_MSG" \
+              --arg sha "$SHORT_SHA" \
+              --arg actor "$ACTOR" \
+              --arg url "$RUN_URL" \
+              '{type: "message", attachments: [{contentType: "application/vnd.microsoft.card.adaptive", content: {type: "AdaptiveCard", version: "1.4", body: [{type: "TextBlock", text: $title, weight: "bolder", size: "medium"}, {type: "TextBlock", text: $msg, wrap: true}, {type: "FactSet", facts: [{title: "Commit", value: $sha}, {title: "By", value: $actor}]}], actions: [{type: "Action.OpenUrl", title: "View Run", url: $url}]}}]}')
+          else
+            echo "Unknown format: $FORMAT"
+            exit 1
+          fi
+
+          curl -sf -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK_URL"
+          echo "Notification sent to $FORMAT webhook"
